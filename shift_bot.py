@@ -110,8 +110,15 @@ def send_message(text, chat_id=None, reply_to=None):
     data = {"chat_id": chat_id or CHAT_ID, "text": text, "parse_mode": "HTML"}
     if reply_to:
         data["reply_to_message_id"] = reply_to
+        data["allow_sending_without_reply"] = True
     resp = requests.post(url, json=data, timeout=10)
-    resp.raise_for_status()
+    if not resp.ok:
+        print(f"发送失败 ({resp.status_code}): {resp.text}")
+        # 去掉 reply_to 重试
+        data.pop("reply_to_message_id", None)
+        data.pop("allow_sending_without_reply", None)
+        resp = requests.post(url, json=data, timeout=10)
+        resp.raise_for_status()
     print("消息发送成功")
 
 
@@ -136,10 +143,18 @@ def poll_and_reply():
     bot_username = me_resp.json()["result"]["username"].lower()
     bot_id = me_resp.json()["result"]["id"]
 
+    import time as _time
+    now_ts = int(_time.time())
+
     replied = 0
     for update in updates:
         msg = update.get("message", {})
         if not msg:
+            continue
+
+        # 忽略超过5分钟的旧消息
+        msg_time = msg.get("date", 0)
+        if now_ts - msg_time > 300:
             continue
 
         text = msg.get("text", "")
