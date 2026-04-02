@@ -1,0 +1,60 @@
+name: Shift Handover Bot
+
+on:
+  schedule:
+    # GitHub Actions 用 UTC 时间，北京时间 = UTC+8
+    # 北京 00:00 = UTC 16:00 (前一天)
+    - cron: '0 16 * * *'
+    # 北京 08:00 = UTC 00:00
+    - cron: '0 0 * * *'
+    # 北京 16:00 = UTC 08:00
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+    inputs:
+      shift:
+        description: '交班时间 (0/8/16)'
+        required: true
+        default: '8'
+        type: choice
+        options:
+          - '0'
+          - '8'
+          - '16'
+
+jobs:
+  handover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Determine shift
+        id: shift
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "shift=${{ github.event.inputs.shift }}" >> $GITHUB_OUTPUT
+          else
+            HOUR=$(date -u +%H)
+            if [ "$HOUR" = "16" ]; then
+              echo "shift=0" >> $GITHUB_OUTPUT
+            elif [ "$HOUR" = "00" ]; then
+              echo "shift=8" >> $GITHUB_OUTPUT
+            elif [ "$HOUR" = "08" ]; then
+              echo "shift=16" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Send handover notification
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: python shift_bot.py --shift ${{ steps.shift.outputs.shift }}
