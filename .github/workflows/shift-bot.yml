@@ -2,12 +2,13 @@ name: Shift Handover Bot
 
 on:
   schedule:
-    # 北京 00:00 = UTC 16:00
-    - cron: '0 16 * * *'
-    # 北京 08:00 = UTC 00:00
-    - cron: '0 0 * * *'
-    # 北京 16:00 = UTC 08:00
-    - cron: '0 8 * * *'
+    # 提前30分钟触发，抵消 GitHub Actions 的延迟
+    # 北京 00:00 = UTC 16:00，提前到 UTC 15:30
+    - cron: '30 15 * * *'
+    # 北京 08:00 = UTC 00:00，提前到 UTC 23:30
+    - cron: '30 23 * * *'
+    # 北京 16:00 = UTC 08:00，提前到 UTC 07:30
+    - cron: '30 7 * * *'
   workflow_dispatch:
     inputs:
       shift:
@@ -36,9 +37,9 @@ jobs:
           else
             HOUR=$(date -u +%H)
             case "$HOUR" in
-              16) SHIFT=0 ;;
-              00) SHIFT=8 ;;
-              08) SHIFT=16 ;;
+              15|16) SHIFT=0 ;;
+              23|00) SHIFT=8 ;;
+              07|08) SHIFT=16 ;;
               *) echo "Not a handover hour"; exit 0 ;;
             esac
           fi
