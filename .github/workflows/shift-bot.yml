@@ -2,8 +2,7 @@ name: Shift Handover Bot
 
 on:
   schedule:
-    # GitHub Actions 用 UTC 时间，北京时间 = UTC+8
-    # 北京 00:00 = UTC 16:00 (前一天)
+    # 北京 00:00 = UTC 16:00
     - cron: '0 16 * * *'
     # 北京 08:00 = UTC 00:00
     - cron: '0 0 * * *'
@@ -27,33 +26,75 @@ jobs:
     timeout-minutes: 1
 
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: pip install requests
-
-      - name: Determine shift
-        id: shift
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "shift=${{ github.event.inputs.shift }}" >> $GITHUB_OUTPUT
-          else
-            HOUR=$(date -u +%H)
-            if [ "$HOUR" = "16" ]; then
-              echo "shift=0" >> $GITHUB_OUTPUT
-            elif [ "$HOUR" = "00" ]; then
-              echo "shift=8" >> $GITHUB_OUTPUT
-            elif [ "$HOUR" = "08" ]; then
-              echo "shift=16" >> $GITHUB_OUTPUT
-            fi
-          fi
-
       - name: Send handover notification
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        run: python shift_bot.py --shift ${{ steps.shift.outputs.shift }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            SHIFT="${{ github.event.inputs.shift }}"
+          else
+            HOUR=$(date -u +%H)
+            case "$HOUR" in
+              16) SHIFT=0 ;;
+              00) SHIFT=8 ;;
+              08) SHIFT=16 ;;
+              *) echo "Not a handover hour"; exit 0 ;;
+            esac
+          fi
+
+          python3 << PYEOF
+          import os, sys, urllib.request, urllib.parse, json
+          from datetime import date, timedelta, datetime, timezone
+
+          SHIFT = int("$SHIFT")
+          BOT_TOKEN = os.environ['TG_BOT_TOKEN']
+          CHAT_ID = os.environ['TG_CHAT_ID']
+
+          STAFF = [
+              ('高尚', '@Satoshi223'),
+              ('艺朗', '@earronyu2'),
+              ('罡门', '@Dincoco69'),
+              ('小瑜', '@username168168'),
+          ]
+          BASE_DATE = date(2026, 3, 29)
+          CST = timezone(timedelta(hours=8))
+          today = datetime.now(CST).date()
+
+          def sched(d):
+              delta = (d - BASE_DATE).days
+              ri = (3 - delta % 4) % 4
+              w = [s for i, s in enumerate(STAFF) if i != ri]
+              return {'早': w[0], '中': w[1], '晚': w[2], '休': STAFF[ri]}
+
+          s = sched(today)
+
+          if SHIFT == 0:
+              ys = sched(today - timedelta(days=1))
+              msg = (f'🔔 交班通知 — {today.month}月{today.day}日 00:00\n\n'
+                     f'⬇️ 中班下班: {ys["中"][0]} {ys["中"][1]}\n'
+                     f'⬆️ 晚班上班: {s["晚"][0]} {s["晚"][1]}\n\n'
+                     f'📋 今日排班:\n'
+                     f'  晚 00:00~08:00  {s["晚"][0]} {s["晚"][1]}\n'
+                     f'  早 08:00~16:00  {s["早"][0]} {s["早"][1]}\n'
+                     f'  中 16:00~23:59  {s["中"][0]} {s["中"][1]}\n'
+                     f'  休息: {s["休"][0]} {s["休"][1]}\n\n'
+                     f'请做好交接！')
+          elif SHIFT == 8:
+              msg = (f'🔔 交班通知 — {today.month}月{today.day}日 08:00\n\n'
+                     f'⬇️ 晚班下班: {s["晚"][0]} {s["晚"][1]}\n'
+                     f'⬆️ 早班上班: {s["早"][0]} {s["早"][1]}\n\n'
+                     f'请做好交接！')
+          else:
+              msg = (f'🔔 交班通知 — {today.month}月{today.day}日 16:00\n\n'
+                     f'⬇️ 早班下班: {s["早"][0]} {s["早"][1]}\n'
+                     f'⬆️ 中班上班: {s["中"][0]} {s["中"][1]}\n\n'
+                     f'请做好交接！')
+
+          data = urllib.parse.urlencode({'chat_id': CHAT_ID, 'text': msg}).encode()
+          req = urllib.request.Request(f'https://api.telegram.org/bot{BOT_TOKEN}/sendMessage', data=data)
+          resp = urllib.request.urlopen(req, timeout=10)
+          r = json.loads(resp.read())
+          print('发送成功' if r.get('ok') else f'失败: {r}')
+          sys.exit(0 if r.get('ok') else 1)
+          PYEOF
